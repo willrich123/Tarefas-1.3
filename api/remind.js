@@ -19,21 +19,24 @@ export default async function handler(req, res) {
 
         if (req.method === 'POST') {
             const { id, title, date, time, category, priority, notes } = req.body;
-
             const data = await redis.get('reminders');
-            const reminders = data ? JSON.parse(data) : [];
+            let reminders = data ? JSON.parse(data) : [];
 
+            // UPSERT: Se já existe, atualiza. Se não, adiciona.
+            const idx = reminders.findIndex(r => r.id === id);
             const newReminder = {
-                id, title, date, time: time || '09:00',
-                category, priority, notes,
-                sent: false, cancelled: false, createdAt: new Date().toISOString()
+                id, title, date, time, category, priority, notes,
+                sent: false,
+                cancelled: false,
+                updatedAt: Date.now()
             };
 
-            const existingIndex = reminders.findIndex(r => r.id === id);
-            if (existingIndex >= 0) {
-                reminders[existingIndex] = newReminder;
+            if (idx >= 0) {
+                // Caso o lembrete tenha sido editado, limpamos o status de 'enviado'
+                // para que o novo horário seja processado pelo cron
+                reminders[idx] = { ...reminders[idx], ...newReminder };
             } else {
-                reminders.push(newReminder);
+                reminders.push({ ...newReminder, createdAt: Date.now() });
             }
 
             await redis.set('reminders', JSON.stringify(reminders));
