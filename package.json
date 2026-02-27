@@ -1,5 +1,8 @@
 {
     "name": "tarefas-api",
     "version": "1.0.0",
-    "type": "module"
+    "type": "module",
+    "dependencies": {
+        "ioredis": "^5.4.1"
+    }
 }
