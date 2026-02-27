@@ -35,9 +35,16 @@ async function sendEmail(reminder) {
 
 export default async function handler(req, res) {
     // Segurança: Verifica se a requisição veio do agendador da Vercel ou tem a chave secreta
-    const authHeader = req.headers.authorization;
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}` && req.headers['x-vercel-cron'] !== 'true') {
-        return res.status(401).json({ error: 'Não autorizado' });
+    const authHeader = req.headers.authorization || '';
+    const secret = process.env.CRON_SECRET;
+
+    // Log para ajudar no debug (aparecerá nos logs da Vercel)
+    console.log("Auth Header:", authHeader ? "Presente" : "Ausente");
+    console.log("Secret configurado:", secret ? "Sim" : "Não");
+
+    if (authHeader !== `Bearer ${secret}` && req.headers['x-vercel-cron'] !== 'true') {
+        console.error("Falha na autenticação do Cron");
+        return res.status(401).json({ error: 'Não autorizado', debug: !secret ? 'Variável CRON_SECRET não encontrada na Vercel' : 'Senha incorreta' });
     }
 
     const now = new Date();
