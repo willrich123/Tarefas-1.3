@@ -1,0 +1,12 @@
+{
+  "name": "tarefas-v1-3",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "echo 'build ok'"
+  },
+  "dependencies": {
+    "axios": "^1.6.7",
+    "@vercel/kv": "^1.0.1"
+  }
+}
