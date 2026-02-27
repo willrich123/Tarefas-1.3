@@ -40,6 +40,21 @@ export default async function handler(req, res) {
             return res.status(200).json({ ok: true });
         }
 
+        if (req.method === 'PATCH') {
+            const { id, sent, cancelled } = req.body;
+            const data = await redis.get('reminders');
+            let reminders = data ? JSON.parse(data) : [];
+
+            const idx = reminders.findIndex(r => r.id === id);
+            if (idx >= 0) {
+                if (sent !== undefined) reminders[idx].sent = sent;
+                if (cancelled !== undefined) reminders[idx].cancelled = cancelled;
+                await redis.set('reminders', JSON.stringify(reminders));
+                return res.status(200).json({ ok: true });
+            }
+            return res.status(404).json({ error: 'Não encontrado' });
+        }
+
         if (req.method === 'DELETE') {
             const { id } = req.query;
             const data = await redis.get('reminders');
