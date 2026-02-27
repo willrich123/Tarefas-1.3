@@ -18,10 +18,10 @@ export default async function handler(req, res) {
 
     let redis;
     try {
-        // 3. Pegar horário de Brasília de forma ultra-robusta
-        // Vercel usa UTC. BR é UTC-3.
-        const nowBR = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
-        const serverTimeStr = nowBR.toLocaleString("pt-BR");
+        // 3. Pegar horário de Brasília (UTC-3) de forma ultra-segura
+        const now = new Date();
+        const brtTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+        const serverTimeStr = brtTime.toLocaleString("pt-BR");
 
         // 4. Conectar ao Redis
         const redisUrl = process.env.REDIS_URL;
@@ -34,6 +34,8 @@ export default async function handler(req, res) {
 
         let changed = false;
         let sentCount = 0;
+        let debugLog = [];
+
         const EMAILJS = {
             serviceId: 'service_46es4j2',
             templateId: 'template_cluuomn',
@@ -45,12 +47,23 @@ export default async function handler(req, res) {
         for (const r of reminders) {
             if (r.sent || r.cancelled) continue;
 
-            // Data da tarefa (tratada como BR pelo servidor Vercel)
-            const dtTask = new Date(`${r.date}T${r.time || '09:00'}:00`);
-            const diffMs = dtTask - nowBR;
+            // Parsing robusto: garante YYYY-MM-DD e HH:mm
+            const dateStr = String(r.date || '').trim();
+            const timeStr = String(r.time || '09:00').trim();
 
-            // Se for AGORA (até 65s no futuro ou 5 min no passado)
-            if (diffMs <= 65000 && diffMs > -300000) {
+            if (!dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) continue;
+
+            // Criamos a data da tarefa e comparamos com o BrT do servidor
+            const dtTask = new Date(`${dateStr}T${timeStr}:00`);
+            const diffMs = dtTask - brtTime;
+
+            // Mostra os próximos 3 lembretes no debug
+            if (debugLog.length < 3 && diffMs > 0) {
+                debugLog.push(`Próximo: "${r.title}" em ${Math.round(diffMs / 60000)}min`);
+            }
+
+            // Janela de 10 min de tolerância
+            if (diffMs <= 65000 && diffMs > -600000) {
                 const emailRes = await fetch(EMAILJS.apiUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -73,9 +86,13 @@ export default async function handler(req, res) {
 
                 if (emailRes.ok) {
                     r.sent = true;
-                    r.sentAt = nowBR.toISOString();
+                    r.sentAt = brtTime.toISOString();
                     changed = true;
                     sentCount++;
+                    debugLog.push(`SUCESSO: Enviado "${r.title}"`);
+                } else {
+                    const txt = await emailRes.text();
+                    debugLog.push(`FALHA EmailJS: ${txt}`);
                 }
             }
         }
@@ -85,16 +102,15 @@ export default async function handler(req, res) {
         }
 
         return res.status(200).json({
-            ok: true,
-            serverTime: serverTimeStr,
-            sentNow: sentCount,
-            totalInBank: reminders.length,
-            pendingInBank: reminders.filter(r => !r.sent && !r.cancelled).length
+            status: "operacional",
+            brtTime: serverTimeStr,
+            sentCount,
+            totalReminders: reminders.length,
+            debug: debugLog
         });
 
     } catch (err) {
-        console.error("Cron Error:", err.message);
-        return res.status(500).json({ error: 'Erro Interno', message: err.message });
+        return res.status(500).json({ status: "erro", error: err.message });
     } finally {
         if (redis) redis.quit();
     }
