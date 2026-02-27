@@ -2878,9 +2878,12 @@
       if (ms > 30 * 86400 * 1000) return;
 
       // REGISTRO NO SERVIDOR (Backup para Celular/App Fechado)
-      serverRegisterRemind(t).then(ok => {
-        if (ok) console.log('☁️ Sincronizado com o servidor');
-      });
+      // No celular, aguardamos o registro para garantir que a nuvem recebeu a tarefa
+      const syncToast = toast('☁️ Sincronizando com a nuvem...', 2000);
+      const ok = await serverRegisterRemind(t);
+      if (ok) {
+        console.log('☁️ Sincronizado com o servidor');
+      }
 
       // Se o tempo local já passou muito, ignora timers
       if (ms < -600000) return;
