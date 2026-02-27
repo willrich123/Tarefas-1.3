@@ -2794,7 +2794,7 @@
 
     // Detecta se está rodando localmente (localhost) ou em produção (Vercel)
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    const SERVER_URL = isLocal ? 'http://localhost:3333' : ''; // Relative URL for Vercel production
+    const SERVER_URL = isLocal ? 'http://localhost:3333' : window.location.origin;
     let _serverOk = !isLocal;     // On production, assume the /api is always there
 
     /* Verifica se o servidor Node.js está rodando (apenas se for local) */
@@ -2823,13 +2823,17 @@
             category: CATS[t.category] ? CATS[t.category].l : t.category,
             priority: t.priority, notes: t.notes || ''
           }),
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(8000), // Aumentado para 8s (conexões móveis)
         });
         const data = await res.json();
         if (data.ok) { console.log(`📬 Servidor: lembrete registrado — ${t.title}`); return true; }
         if (data.skipped) { console.log(`⏭️ Servidor: horário já passou — ${t.title}`); return true; }
         return false;
-      } catch (e) { console.warn('Servidor indisponível, usando fallback SW'); _serverOk = false; return false; }
+      } catch (e) {
+        console.warn('Servidor indisponível:', e);
+        toast('⚠️ Falha de rede: Lembrete salvo apenas no celular');
+        return false;
+      }
     }
 
     /* Cancela lembrete no servidor */
@@ -2862,15 +2866,20 @@
       const hora = t.time && t.time.trim() ? t.time : '09:00';
       const dt = new Date(t.date + 'T' + hora + ':00');
       const ms = dt - Date.now();
-      if (ms <= 0 || ms > 30 * 86400 * 1000) return;
 
-      // CAMADA 1: Servidor Node.js (melhor — funciona com browser fechado)
+      // Se for muito no futuro (mais de 30 dias), não agenda localmente no timer
+      if (ms > 30 * 86400 * 1000) return;
+
+      // CAMADA 1: Servidor Node.js (CRÍTICO para Mobile)
+      // Sincronizamos mesmo se ms <= 0, pois o relógio do celular pode estar errado!
       const serverOk = await serverRegisterRemind(t);
       if (serverOk) toast('☁️ Sincronizado com o servidor');
-      else console.warn('Falha na sincronização com o servidor');
+
+      // Se o tempo local já passou mais de 10 min, não agenda timer local nem SW
+      if (ms < -600000) return;
 
       // CAMADA 2: Service Worker (funciona com aba fechada)
-      swPostSchedule(t, ms);
+      swPostSchedule(t, Math.max(0, ms));
 
       // CAMADA 3: Fallback local (aba aberta) — notificação + email
       _timers[t.id] = setTimeout(() => {
