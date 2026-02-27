@@ -1,3 +1,5 @@
+import Redis from 'ioredis';
+
 export default async function handler(req, res) {
     // 1. Pegar a senha de forma ultra flexível
     const rawAuth = (req.headers.authorization || '').trim();
@@ -14,29 +16,21 @@ export default async function handler(req, res) {
         });
     }
 
+    let redis;
     try {
         const now = new Date();
 
-        // 3. Verificar variáveis do Banco (KV)
-        const kvUrl = process.env.KV_REST_API_URL;
-        const kvToken = process.env.KV_REST_API_TOKEN;
-
-        if (!kvUrl || !kvToken) {
-            throw new Error("Variáveis KV_REST_API_URL ou KV_REST_API_TOKEN não encontradas. Conecte o Storage e faça Redeploy.");
+        // 3. Conectar ao Redis usando a URL da Vercel
+        const redisUrl = process.env.REDIS_URL;
+        if (!redisUrl) {
+            throw new Error("Variável REDIS_URL não encontrada. Conecte o Storage e faça Redeploy.");
         }
+
+        redis = new Redis(redisUrl);
 
         // 4. Pegar lembretes
-        const kvRes = await fetch(`${kvUrl}/get/reminders`, {
-            headers: { Authorization: `Bearer ${kvToken}` }
-        });
-
-        if (!kvRes.ok) {
-            const txt = await kvRes.text();
-            throw new Error(`Erro no Banco (KV): ${kvRes.status} - ${txt}`);
-        }
-
-        const kvData = await kvRes.json();
-        let reminders = kvData.result ? JSON.parse(kvData.result) : [];
+        const data = await redis.get('reminders');
+        let reminders = data ? JSON.parse(data) : [];
 
         let changed = false;
         const EMAILJS = {
@@ -53,6 +47,7 @@ export default async function handler(req, res) {
             const dt = new Date(`${r.date}T${r.time || '09:00'}:00`);
             const diffMs = dt - now;
 
+            // Se for nos próximos 60 segundos (ou até 5 min atrás por segurança)
             if (diffMs <= 60000 && diffMs > -300000) {
                 const emailRes = await fetch(EMAILJS.apiUrl, {
                     method: 'POST',
@@ -83,11 +78,7 @@ export default async function handler(req, res) {
         }
 
         if (changed) {
-            await fetch(`${kvUrl}/set/reminders`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${kvToken}` },
-                body: JSON.stringify(reminders)
-            });
+            await redis.set('reminders', JSON.stringify(reminders));
         }
 
         return res.status(200).json({ ok: true, processed: changed });
@@ -97,7 +88,9 @@ export default async function handler(req, res) {
         return res.status(500).json({
             error: 'Erro Interno',
             message: err.message,
-            orientacao: "Verifique se o Storage está conectado e se você fez o Redeploy."
+            orientacao: "Verifique se o REDIS_URL está correto."
         });
+    } finally {
+        if (redis) redis.quit();
     }
 }
