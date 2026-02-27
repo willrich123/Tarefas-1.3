@@ -55,7 +55,19 @@ export default async function handler(req, res) {
     }
 
     const now = new Date();
-    const reminders = await kv.get('reminders') || [];
+    let reminders = [];
+
+    try {
+        reminders = await kv.get('reminders') || [];
+    } catch (err) {
+        console.error("ERRO AO ACESSAR O KV:", err.message);
+        return res.status(500).json({
+            error: 'Erro de Banco de Dados',
+            details: 'O Vercel KV não está respondendo ou não foi conectado corretamente.',
+            message: err.message
+        });
+    }
+
     let changed = false;
 
     for (const r of reminders) {
