@@ -1,10 +1,10 @@
 {
   "name": "tarefas-reminder-server",
   "version": "1.0.0",
-  "description": "Servidor local para envio de lembretes por email via EmailJS REST API",
-  "main": "server.js",
+  "type": "module",
+  "description": "App de Calendário e Lembretes",
   "scripts": {
-    "start": "node server.js",
+    "build": "echo 'No build needed'",
     "dev": "node server.js"
   },
   "dependencies": {
