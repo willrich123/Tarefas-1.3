@@ -59,6 +59,14 @@
         if (typeof toast !== 'undefined') {
           toast("✅ Lembrete enviado!");
         }
+
+        // NOVO: Avisa o servidor que este lembrete já foi enviado para o Cron não duplicar
+        fetch(`${SERVER_URL}/api/remind`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: tarefa.id, sent: true })
+        }).catch(e => console.warn("Erro ao atualizar status no servidor", e));
+
       } catch (error) {
         console.error("❌ Erro ao enviar email:", error);
         if (typeof toast !== 'undefined') {
@@ -2867,25 +2875,25 @@
       const dt = new Date(t.date + 'T' + hora + ':00');
       const ms = dt - Date.now();
 
-      // Se for muito no futuro (mais de 30 dias), não agenda localmente no timer
       if (ms > 30 * 86400 * 1000) return;
 
-      // CAMADA 1: Servidor Node.js (CRÍTICO para Mobile)
-      // Sincronizamos mesmo se ms <= 0, pois o relógio do celular pode estar errado!
-      const serverOk = await serverRegisterRemind(t);
-      if (serverOk) toast('☁️ Sincronizado com o servidor');
+      // REGISTRO NO SERVIDOR (Backup para Celular/App Fechado)
+      serverRegisterRemind(t).then(ok => {
+        if (ok) console.log('☁️ Sincronizado com o servidor');
+      });
 
-      // Se o tempo local já passou mais de 10 min, não agenda timer local nem SW
+      // Se o tempo local já passou muito, ignora timers
       if (ms < -600000) return;
 
-      // CAMADA 2: Service Worker (funciona com aba fechada)
+      // AGENDAMENTO NO SERVICE WORKER (Notificação Push)
       swPostSchedule(t, Math.max(0, ms));
 
-      // CAMADA 3: Fallback local (aba aberta) — notificação + email
+      // TIMER LOCAL (Ação Imediata se o app estiver aberto)
       _timers[t.id] = setTimeout(() => {
         delete _timers[t.id];
         const cur = tasks.find(x => x.id === t.id);
         if (!cur || cur.done) return;
+
         if (notifOk && Notification.permission === 'granted') {
           const n = new Notification('⏰ ' + cur.title, {
             body: (cur.time ? cur.time + ' — ' : '') +
@@ -2895,10 +2903,11 @@
           n.onclick = () => { window.focus(); n.close(); };
         }
         toast('⏰ ' + cur.title + (cur.time ? ' às ' + cur.time : ''), 5000);
-        // Dispara email imediatamente (aba aberta) se servidor não está rodando
-        if (!_serverOk) enviarLembrete(cur);
 
-      }, ms);
+        // Envio de Email pelo Browser (redundância positiva)
+        enviarLembrete(cur);
+
+      }, Math.max(0, ms));
     }
 
     function schedAll() {
