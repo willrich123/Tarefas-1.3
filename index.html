@@ -2856,7 +2856,7 @@
         navigator.serviceWorker.controller.postMessage(payload);
     }
 
-    function schedRemind(t) {
+    async function schedRemind(t) {
       if (_timers[t.id]) { clearTimeout(_timers[t.id]); delete _timers[t.id]; }
       if (!t.remind || !t.date) return;
       const hora = t.time && t.time.trim() ? t.time : '09:00';
@@ -2865,7 +2865,9 @@
       if (ms <= 0 || ms > 30 * 86400 * 1000) return;
 
       // CAMADA 1: Servidor Node.js (melhor — funciona com browser fechado)
-      serverRegisterRemind(t);
+      const serverOk = await serverRegisterRemind(t);
+      if (serverOk) toast('☁️ Sincronizado com o servidor');
+      else console.warn('Falha na sincronização com o servidor');
 
       // CAMADA 2: Service Worker (funciona com aba fechada)
       swPostSchedule(t, ms);
@@ -3112,19 +3114,22 @@
       const s = t.subtasks.find(x => x.id === sid); if (!s) return;
       s.done = !s.done; persist(); renderAll();
     }
-    function toggleRemind(id) {
+    async function toggleRemind(id) {
       const t = tasks.find(x => x.id === id); if (!t) return;
       t.remind = !t.remind;
       if (t.remind) {
         if (!notifOk) reqNotif();
         // Usa schedRemindComEmail para garantir fila de email mesmo com app fechado
-        schedRemindComEmail(t);
+        await schedRemindComEmail(t);
         toast('🔔 Lembrete agendado!');
       } else {
         // Cancela agendamento no SW
         if (_swReg && _swReg.active) _swReg.active.postMessage({ type: 'CANCEL', taskId: t.id });
         else if (navigator.serviceWorker && navigator.serviceWorker.controller)
           navigator.serviceWorker.controller.postMessage({ type: 'CANCEL', taskId: t.id });
+
+        // Cancela no servidor
+        serverCancelRemind(t.id);
         toast('🔕 Lembrete removido');
       }
       persist(); renderAll();
@@ -3182,7 +3187,7 @@
     }
     function closeModal() { document.getElementById('overlay').classList.remove('on') }
 
-    function save() {
+    async function save() {
       const title = document.getElementById('fTitle').value.trim(); if (!title) return;
       const tags = document.getElementById('fTags').value.split(',').map(s => s.trim()).filter(Boolean);
       const payload = {
@@ -3194,19 +3199,31 @@
         tags, notes: document.getElementById('fNotes').value.trim(),
         subtasks: [...sfSubs], remind: document.getElementById('fNotif').checked,
       };
+
+      const btn = document.getElementById('btnSave');
+      const oldTxt = btn.textContent;
+      btn.textContent = 'Salvando...';
+      btn.disabled = true;
+
       if (editId) {
         const i = tasks.findIndex(x => x.id === editId);
-        if (i >= 0) { tasks[i] = { ...tasks[i], ...payload }; schedRemindComEmail(tasks[i]); }
+        if (i >= 0) {
+          tasks[i] = { ...tasks[i], ...payload };
+          await schedRemindComEmail(tasks[i]);
+        }
         toast('✅ Tarefa atualizada!');
       } else {
         const nt = { id: gid(), ...payload, done: false, createdAt: Date.now() };
         tasks.unshift(nt);
         if (nt.remind) {
           if (!notifOk) reqNotif();
-          schedRemindComEmail(nt);
+          await schedRemindComEmail(nt);
         }
         toast('✨ Tarefa criada!');
       }
+
+      btn.textContent = oldTxt;
+      btn.disabled = false;
       closeModal(); persist(); renderAll();
     }
 
@@ -3500,8 +3517,8 @@
 
     // Ao agendar um lembrete, também enfileira o email
     const _schedRemindOrig = schedRemind;
-    function schedRemindComEmail(t) {
-      _schedRemindOrig(t);
+    async function schedRemindComEmail(t) {
+      await schedRemind(t);
       // Enfileira o email para garantir envio mesmo com app fechado
       if (t.remind && t.date && !t.done) {
         const hora = t.time && t.time.trim() ? t.time : '09:00';
