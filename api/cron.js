@@ -1,11 +1,10 @@
 export default async function handler(req, res) {
     // 1. Pegar a senha de forma ultra flexível
     const rawAuth = (req.headers.authorization || '').trim();
-    // Remove "Bearer " se existir para comparar só a senha pura
     const authHeader = rawAuth.replace(/Bearer\s+/i, '').trim();
     const secret = (process.env.CRON_SECRET || '').trim();
 
-    // 2. Bloquear acesso não autorizado (com log para o usuário ver)
+    // 2. Bloquear acesso não autorizado
     if (authHeader !== secret && req.headers['x-vercel-cron'] !== 'true') {
         return res.status(401).json({
             error: 'Não autorizado',
@@ -18,11 +17,24 @@ export default async function handler(req, res) {
     try {
         const now = new Date();
 
-        // 3. Pegar lembretes via Fetch (mais estável que pacotes)
-        const kvUrl = `${process.env.KV_REST_API_URL}/get/reminders`;
-        const kvRes = await fetch(kvUrl, {
-            headers: { Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}` }
+        // 3. Verificar variáveis do Banco (KV)
+        const kvUrl = process.env.KV_REST_API_URL;
+        const kvToken = process.env.KV_REST_API_TOKEN;
+
+        if (!kvUrl || !kvToken) {
+            throw new Error("Variáveis KV_REST_API_URL ou KV_REST_API_TOKEN não encontradas. Conecte o Storage e faça Redeploy.");
+        }
+
+        // 4. Pegar lembretes
+        const kvRes = await fetch(`${kvUrl}/get/reminders`, {
+            headers: { Authorization: `Bearer ${kvToken}` }
         });
+
+        if (!kvRes.ok) {
+            const txt = await kvRes.text();
+            throw new Error(`Erro no Banco (KV): ${kvRes.status} - ${txt}`);
+        }
+
         const kvData = await kvRes.json();
         let reminders = kvData.result ? JSON.parse(kvData.result) : [];
 
@@ -35,7 +47,6 @@ export default async function handler(req, res) {
             apiUrl: 'https://api.emailjs.com/api/v1.0/email/send',
         };
 
-        // 4. Verificar quem precisa de email
         for (const r of reminders) {
             if (r.sent || r.cancelled) continue;
 
@@ -43,7 +54,6 @@ export default async function handler(req, res) {
             const diffMs = dt - now;
 
             if (diffMs <= 60000 && diffMs > -300000) {
-                // Enviar via Fetch
                 const emailRes = await fetch(EMAILJS.apiUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -72,11 +82,10 @@ export default async function handler(req, res) {
             }
         }
 
-        // 5. Salvar de volta se mudou
         if (changed) {
-            await fetch(`${process.env.KV_REST_API_URL}/set/reminders`, {
+            await fetch(`${kvUrl}/set/reminders`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}` },
+                headers: { Authorization: `Bearer ${kvToken}` },
                 body: JSON.stringify(reminders)
             });
         }
@@ -85,6 +94,10 @@ export default async function handler(req, res) {
 
     } catch (err) {
         console.error("Erro Fatal:", err.message);
-        return res.status(500).json({ error: 'Erro Interno', message: err.message });
+        return res.status(500).json({
+            error: 'Erro Interno',
+            message: err.message,
+            orientacao: "Verifique se o Storage está conectado e se você fez o Redeploy."
+        });
     }
 }
