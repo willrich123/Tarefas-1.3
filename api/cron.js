@@ -18,7 +18,10 @@ export default async function handler(req, res) {
 
     let redis;
     try {
-        const now = new Date();
+        // 3. Ajustar fuso horário para o Brasil (Brasília)
+        // Vercel usa UTC por padrão. Precisamos "fingir" que o servidor está no Brasil.
+        const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+        const serverTimeStr = now.toLocaleString("pt-BR");
 
         // 3. Conectar ao Redis usando a URL da Vercel
         const redisUrl = process.env.REDIS_URL;
@@ -81,7 +84,12 @@ export default async function handler(req, res) {
             await redis.set('reminders', JSON.stringify(reminders));
         }
 
-        return res.status(200).json({ ok: true, processed: changed });
+        return res.status(200).json({
+            ok: true,
+            processed: changed,
+            serverTime: serverTimeStr,
+            remindersChecked: reminders.length
+        });
 
     } catch (err) {
         console.error("Erro Fatal:", err.message);
