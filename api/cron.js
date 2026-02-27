@@ -1,13 +1,17 @@
 export default async function handler(req, res) {
-    // 1. Pegar a senha com segurança (sem dar erro se estiver vazia)
-    const authHeader = (req.headers.authorization || '');
-    const secret = (process.env.CRON_SECRET || '');
+    // 1. Pegar a senha de forma ultra flexível
+    const rawAuth = (req.headers.authorization || '').trim();
+    // Remove "Bearer " se existir para comparar só a senha pura
+    const authHeader = rawAuth.replace(/Bearer\s+/i, '').trim();
+    const secret = (process.env.CRON_SECRET || '').trim();
 
-    // 2. Bloquear acesso não autorizado
-    if (authHeader.trim() !== `Bearer ${secret.trim()}` && req.headers['x-vercel-cron'] !== 'true') {
+    // 2. Bloquear acesso não autorizado (com log para o usuário ver)
+    if (authHeader !== secret && req.headers['x-vercel-cron'] !== 'true') {
         return res.status(401).json({
             error: 'Não autorizado',
-            motivo: !secret ? 'Senha não configurada na Vercel' : 'Senha incorreta'
+            recebido: authHeader || "(vazio)",
+            esperado: secret.substring(0, 2) + "***",
+            dica: "A senha no Cron-job deve ser igual a CRON_SECRET na Vercel"
         });
     }
 
