@@ -18,12 +18,22 @@ export default async function handler(req, res) {
 
     let redis;
     try {
-        // 3. Ajustar fuso horário para o Brasil (Brasília)
-        // Vercel usa UTC por padrão. Precisamos "fingir" que o servidor está no Brasil.
-        const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
-        const serverTimeStr = now.toLocaleString("pt-BR");
+        // 3. Pegar horário exato de Brasília (imune ao fuso do servidor)
+        const dtf = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/Sao_Paulo',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+            hour12: false
+        });
+        const parts = dtf.formatToParts(new Date());
+        const p = {};
+        parts.forEach(({ type, value }) => p[type] = value);
 
-        // 3. Conectar ao Redis usando a URL da Vercel
+        // Criar um Date que "pensa" que é Brasília
+        const nowBR = new Date(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}`);
+        const serverTimeStr = `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}:${p.second}`;
+
+        // 4. Conectar ao Redis usando a URL da Vercel
         const redisUrl = process.env.REDIS_URL;
         if (!redisUrl) {
             throw new Error("Variável REDIS_URL não encontrada. Conecte o Storage e faça Redeploy.");
@@ -31,11 +41,13 @@ export default async function handler(req, res) {
 
         redis = new Redis(redisUrl);
 
-        // 4. Pegar lembretes
+        // 5. Pegar lembretes
         const data = await redis.get('reminders');
         let reminders = data ? JSON.parse(data) : [];
 
         let changed = false;
+        const pendingCount = reminders.filter(r => !r.sent && !r.cancelled).length;
+
         const EMAILJS = {
             serviceId: 'service_46es4j2',
             templateId: 'template_cluuomn',
@@ -47,8 +59,9 @@ export default async function handler(req, res) {
         for (const r of reminders) {
             if (r.sent || r.cancelled) continue;
 
-            const dt = new Date(`${r.date}T${r.time || '09:00'}:00`);
-            const diffMs = dt - now;
+            // Criar a data da tarefa também no "fuso Brasília" para comparar igual
+            const dtTask = new Date(`${r.date}T${r.time || '09:00'}:00`);
+            const diffMs = dtTask - nowBR;
 
             // Se for nos próximos 60 segundos (ou até 5 min atrás por segurança)
             if (diffMs <= 60000 && diffMs > -300000) {
@@ -74,7 +87,7 @@ export default async function handler(req, res) {
 
                 if (emailRes.ok) {
                     r.sent = true;
-                    r.sentAt = new Date().toISOString();
+                    r.sentAt = nowBR.toISOString();
                     changed = true;
                 }
             }
@@ -88,7 +101,8 @@ export default async function handler(req, res) {
             ok: true,
             processed: changed,
             serverTime: serverTimeStr,
-            remindersChecked: reminders.length
+            total: reminders.length,
+            pending: pendingCount
         });
 
     } catch (err) {
