@@ -18,27 +18,14 @@ export default async function handler(req, res) {
 
     let redis;
     try {
-        // 3. Pegar horário exato de Brasília (imune ao fuso do servidor)
-        const dtf = new Intl.DateTimeFormat('en-US', {
-            timeZone: 'America/Sao_Paulo',
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit',
-            hour12: false
-        });
-        const parts = dtf.formatToParts(new Date());
-        const p = {};
-        parts.forEach(({ type, value }) => p[type] = value);
+        // 3. Pegar horário de Brasília de forma ultra-robusta
+        // Vercel usa UTC. BR é UTC-3.
+        const nowBR = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+        const serverTimeStr = nowBR.toLocaleString("pt-BR");
 
-        // Criar um Date que "pensa" que é Brasília
-        const nowBR = new Date(`${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}`);
-        const serverTimeStr = `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}:${p.second}`;
-
-        // 4. Conectar ao Redis usando a URL da Vercel
+        // 4. Conectar ao Redis
         const redisUrl = process.env.REDIS_URL;
-        if (!redisUrl) {
-            throw new Error("Variável REDIS_URL não encontrada. Conecte o Storage e faça Redeploy.");
-        }
-
+        if (!redisUrl) throw new Error("REDIS_URL não encontrada.");
         redis = new Redis(redisUrl);
 
         // 5. Pegar lembretes
@@ -46,8 +33,7 @@ export default async function handler(req, res) {
         let reminders = data ? JSON.parse(data) : [];
 
         let changed = false;
-        const pendingCount = reminders.filter(r => !r.sent && !r.cancelled).length;
-
+        let sentCount = 0;
         const EMAILJS = {
             serviceId: 'service_46es4j2',
             templateId: 'template_cluuomn',
@@ -59,12 +45,12 @@ export default async function handler(req, res) {
         for (const r of reminders) {
             if (r.sent || r.cancelled) continue;
 
-            // Criar a data da tarefa também no "fuso Brasília" para comparar igual
+            // Data da tarefa (tratada como BR pelo servidor Vercel)
             const dtTask = new Date(`${r.date}T${r.time || '09:00'}:00`);
             const diffMs = dtTask - nowBR;
 
-            // Se for nos próximos 60 segundos (ou até 5 min atrás por segurança)
-            if (diffMs <= 60000 && diffMs > -300000) {
+            // Se for AGORA (até 65s no futuro ou 5 min no passado)
+            if (diffMs <= 65000 && diffMs > -300000) {
                 const emailRes = await fetch(EMAILJS.apiUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -89,6 +75,7 @@ export default async function handler(req, res) {
                     r.sent = true;
                     r.sentAt = nowBR.toISOString();
                     changed = true;
+                    sentCount++;
                 }
             }
         }
@@ -99,19 +86,15 @@ export default async function handler(req, res) {
 
         return res.status(200).json({
             ok: true,
-            processed: changed,
             serverTime: serverTimeStr,
-            total: reminders.length,
-            pending: pendingCount
+            sentNow: sentCount,
+            totalInBank: reminders.length,
+            pendingInBank: reminders.filter(r => !r.sent && !r.cancelled).length
         });
 
     } catch (err) {
-        console.error("Erro Fatal:", err.message);
-        return res.status(500).json({
-            error: 'Erro Interno',
-            message: err.message,
-            orientacao: "Verifique se o REDIS_URL está correto."
-        });
+        console.error("Cron Error:", err.message);
+        return res.status(500).json({ error: 'Erro Interno', message: err.message });
     } finally {
         if (redis) redis.quit();
     }
