@@ -1,9 +1,0 @@
-{
-    "name": "tarefas-api",
-    "version": "1.0.0",
-    "type": "module",
-    "dependencies": {
-        "axios": "^1.6.7",
-        "@vercel/kv": "^1.0.1"
-    }
-}
